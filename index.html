@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>TUI</title>
+        <style>
+            * {
+                font-family: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+                font-size: 16px;
+                color: rgb(220, 220, 220);
+                background-color: rgb(10, 10, 10);
+                user-select: none;
+            }
+
+            #cursor {
+                animation: blink 1s step-start infinite;
+                margin-left: -10px;
+                display: inline-block;
+                vertical-align: bottom;
+            }
+
+            @keyframes blink {
+                50% { opacity: 0; }
+                100% { opacity: 1; }
+            }
+
+            span {
+                white-space: pre-wrap;
+            }
+        </style>
+    </head>
+    <body data-user="user" data-device="PC">
+        <span id="output" data-path="~"></span><span id="line"></span>
+        <span id="cursor">|</span>
+        <script>
+            const output = document.getElementById("output");
+            const line = document.getElementById("line");
+
+            const cursor = document.getElementById("cursor");
+
+            const out = {
+                "println": (line) => output.innerText += `${line}\n`,
+                "clear": () => output.innerText = ""
+            };
+            const commands = {
+                "help (command)": "Shows descriptions about commands.",
+                "clear": "Clears console output from the screen.",
+                "echo <text>": "Responds with the inputted text",
+                "ls": "Lists the files in the current folder",
+                "cat <file>": "Prints the text in a file (meow)",
+                "cd <../directory>": "Changes your current directory",
+                "mkdir <directory>": "Create a new directory",
+                "del <file/directory>": "Delete a file or directory",
+                "login <user> (password)": "Log onto another account",
+                "adduser <user> (password)": "Sign up another user",
+                "listusers": "List user accounts",
+                "state <import/export> <import:state>": "Imports/exports the current terminal state"
+            };
+
+            let files = {
+                "user": { }
+            };
+            let users = {
+                "user": null
+            };
+
+            function getCurrentFiles(path) {
+                return Object.keys(files[document.body.dataset.user]).filter(f => f.split("/").slice(0, f.endsWith("/") ? -2 : -1).join("/") == `${path}`).map(f => f.split("/").reverse()[f.endsWith("/") ? 1 : 0]);
+            }
+
+            async function runCommand(txt = "") {
+                const line = txt.split(">")[0].trim();
+                let writeOut = out.println;
+                if (txt.includes(">")) {
+                    const file = txt.split(">")[1].trim().split(" ")[0];
+                    if (file.length == 0) {
+                        writeOut("Provide a file path to forward to.");
+                        return;
+                    }
+                    files[document.body.dataset.user][`${output.dataset.path}/${file}`] ??= "";
+                    writeOut = (txt) => files[document.body.dataset.user][`${output.dataset.path}/${file}`] += `${txt}\n`;
+                }
+
+                if (line.startsWith("help") || line.startsWith("?")) {
+                    if (line.includes(" ")) {
+                        const arg = line.split(" ")[1].toLowerCase();
+                        const filtered = Object.keys(commands).filter(c => c.split(" ")[0] == arg);
+                        
+                        if (filtered.length > 0) writeOut(`${filtered[0]} - ${commands[filtered[0]]}`);
+                        else writeOut("Unknown command!");
+
+                        return;
+                    }
+
+                    for (const [ usage, description ] of Object.entries(commands)) writeOut(`${usage} - ${description}`);
+                }
+                else if (line == "clear") {
+                    out.clear();
+                }
+                else if (line.startsWith("echo")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help echo");
+                        return;
+                    }
+
+                    writeOut(line.split(" ").slice(1).join(" "));
+                }
+                else if (line == "ls") {
+                    let text = "";
+                    let printed = 0;
+
+                    for (const file of getCurrentFiles(output.dataset.path)) {
+                        text += file;
+                        text += ++printed % 8 == 0 ? "\n" : " ";
+                    }
+
+                    writeOut(text.trim());
+                }
+                else if (line.startsWith("cat")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help cat");
+                        return;
+                    }
+                    if (line.split(" ")[1].endsWith("/")) {
+                        writeOut("That file is a directory and cannot be read.");
+                        return;
+                    }
+
+                    const content = files[document.body.dataset.user][`${output.dataset.path}/${line.split(" ")[1]}`];
+                    if (content) writeOut(content);
+                    else writeOut("Unknown file. Type 'ls' for a list of files in your current directory.");
+                    
+                }
+                else if (line.startsWith("cd")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help cd");
+                        return;
+                    }
+
+                    if (line.split(" ")[1] == "..") {
+                        if (!output.dataset.path.includes("/")) {
+                            writeOut("You may not leave the home directory.");
+                            return;
+                        }
+
+                        output.dataset.path = output.dataset.path.split("/").slice(0, -1).join("/");
+
+                        return;
+                    }
+
+                    let dir = `${output.dataset.path}/${line.split(" ")[1]}`;
+                    if (dir.endsWith("/")) dir = dir.slice(0, -1);
+
+                    if (!((dir + "/") in files[document.body.dataset.user])) {
+                        writeOut("Directory was not found.");
+                        return;
+                    }
+                    
+                    output.dataset.path = dir;
+                }
+                else if (line.startsWith("mkdir")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help mkdir");
+                        return;
+                    }
+
+                    let dir = `${output.dataset.path}/${line.split(" ")[1]}`;
+                    if (!dir.endsWith("/")) dir += "/";
+
+                    if (dir in files[document.body.dataset.user]) {
+                        writeOut("Directory already exists.");
+                        return;
+                    }
+                    
+                    files[document.body.dataset.user][dir] = null;
+                    writeOut("Directory created.");
+                }
+                else if (line.startsWith("del")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help del");
+                        return;
+                    }
+
+                    let file = `${output.dataset.path}/${line.split(" ")[1]}`;
+                    if (!(file in files[document.body.dataset.user]) && (file + "/") in files[document.body.dataset.user]) file += "/";
+
+                    if (file.endsWith("/")) {
+                        for (const f of Object.keys(files[document.body.dataset.user]).filter(k => k.length > file.length && k.startsWith(file))) delete files[document.body.dataset.user][f];
+                    }
+
+                    if (file in files[document.body.dataset.user]) {
+                        delete files[document.body.dataset.user][file];
+                        writeOut("File was deleted.");
+                    }
+                    else writeOut("Unknown file. Type 'ls' for a list of files in your current directory.");
+                }
+                else if (line.startsWith("login")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help login");
+                        return;
+                    }
+
+                    const username = line.split(" ")[1], password = line.split(" ")[2];
+                    if (!(username in users)) {
+                        writeOut("No user under that username exists!");
+                        return;
+                    }
+
+                    if (users[username] == null) {
+                        writeOut(`Logged in as ${username}.`);
+                        output.dataset.path = "~";
+                        document.body.dataset.user = username;
+                        return;
+                    }
+                    if (password == null) {
+                        writeOut("Incorrect password.");
+                        return;
+                    }
+
+                    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password))).toHex();
+
+                    if (users[username] === hash) {
+                        writeOut(`Logged in as ${username}.`);
+                        output.dataset.path = "~";
+                        document.body.dataset.user = username;
+                        return;
+                    }
+
+                    writeOut("Incorrect password.");
+                }
+                else if (line.startsWith("adduser")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help adduser");
+                        return;
+                    }
+
+                    const username = line.split(" ")[1], password = line.split(" ")[2];
+                    if (username in users) {
+                        writeOut("A user under that username already exists!");
+                        return;
+                    }
+
+                    if (password == null) {
+                        users[username] = null;
+                        files[username] = { };
+                        writeOut(`Signed up account ${username}.`);
+                        output.dataset.path = "~";
+                        document.body.dataset.user = username;
+                        return;
+                    }
+
+                    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password))).toHex();
+                    
+                    users[username] = hash;
+                    files[username] = { };
+                    writeOut(`Signed up account ${username}.`);
+                    output.dataset.path = "~";
+                    document.body.dataset.user = username;
+                }
+                else if (line.startsWith("listuser")) {
+                    writeOut(`Username: Password Hash`);
+                    for (const [ user, password ] of Object.entries(users)) {
+                        writeOut(`${user}: ${password ?? "no password"}`);
+                    }
+                }
+                else if (line.startsWith("state")) {
+                    if (!line.includes(" ")) {
+                        runCommand("help state");
+                        return;
+                    }
+                    
+                    if (line.split(" ")[1] == "export") {
+                        const state = btoa(JSON.stringify({ files, users }));
+                        writeOut(state);
+                        console.log(state);
+                        await navigator.clipboard.writeText(state);
+                    }
+                    else if (line.split(" ")[1] == "import") {
+                        writeOut("Importing state...");
+                        try {
+                            const json = JSON.parse(atob(line.split(" ")[2]));
+                            files = json.files;
+                            users = json.users;
+                            writeOut("State imported.");
+                        }
+                        catch (ex) {
+                            console.error(ex);
+                            writeOut("Failed to import state.");
+                        }
+                    }
+                    else runCommand("help state");
+                }
+                else writeOut("Unknown command! Type 'help' for a list of commands.");
+            }
+
+            let tabIndex = -1, preTabText = "";
+
+            window.addEventListener("keypress", async (ev) => {
+                if (ev.key.length == 1) {
+                    line.innerText += ev.key;
+                }
+                else if (ev.keyCode == 13) {
+                    const ln = line.innerText;
+                    output.innerText += `${ln}\n`;
+                    if (ln.trim().length > 0) await runCommand(ln.trim());
+                    output.innerText += `${document.body.dataset.user}@${document.body.dataset.device}:${output.dataset.path}$ `;
+                    line.innerText = "";
+                }
+
+                if (ev.keyCode == 9) {
+                    if (tabIndex == -1) preTabText = line.innerText;
+
+                    tabIndex += ev.shiftKey ? -1 : 1;
+                    if (tabIndex < 0) tabIndex = 0;
+                    
+                    if (preTabText.split(" ").length == 1) {
+                        const list = Object.keys(commands).map(s => s.split(" ")[0]).filter(s => s.startsWith(preTabText));
+                        if (tabIndex >= list.length) tabIndex = 0;
+                        line.innerText = list[tabIndex];
+                    }
+                    else {
+                        const current = preTabText.split(" ").reverse()[0];
+                        let dir = current.split("/").slice(0, -1).join("/");
+
+                        if (dir.length > 0) dir += "/";
+
+                        const list = getCurrentFiles(`${output.dataset.path}/${dir}`.replace(/\/$/, "")).filter(f => f.startsWith(current.split("/").reverse()[0]));
+                        if (tabIndex >= list.length) tabIndex = 0;
+                        line.innerText = `${preTabText.split(" ").slice(0, -1).join(" ")} ${dir}${list[tabIndex]}`;
+                    }
+
+                    ev.preventDefault();
+                }
+            });
+            
+            window.addEventListener("paste", (ev) => {
+                line.innerText += ev.clipboardData.getData("text");
+                tabIndex = -1;
+            });
+
+            window.addEventListener("keydown", (ev) => {
+                if (ev.keyCode == 8) {
+                    ev.preventDefault();
+                    if (line.innerText.length == 0) return;
+
+                    if (ev.ctrlKey && tabIndex != -1) {
+                        tabIndex = -1;
+                        line.innerText = preTabText;
+                        return;
+                    }
+
+                    if (ev.ctrlKey) {
+                        line.innerText = line.innerText.replace(/\s*$/, "");
+                        line.innerText = line.innerText.slice(0, -line.innerText.split(" ").filter(w => w.length > 0).reverse()[0].length);
+                    }
+                    else line.innerText = line.innerText.slice(0, -1);
+                }
+
+                
+                if (ev.keyCode != 9 && ev.keyCode != 16) tabIndex = -1;
+            });
+            window.addEventListener("load", () => {
+                runCommand("echo Type 'help' to begin!");
+
+                output.innerText += `${document.body.dataset.user}@${document.body.dataset.device}:${output.dataset.path}$ `;
+            });
+        </script>
+    </body>
+</html>
